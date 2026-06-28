@@ -1,5 +1,5 @@
 // --- GLOBAL VARIABLES ---
-const API_URL = 'http://localhost:5000/api';
+const API_URL = 'https://hazard-analysis-backend.onrender.com/api';
 let currentUser = null;
 let hazards = [];
 let materials = JSON.parse(localStorage.getItem('hars_materials')) || [];
