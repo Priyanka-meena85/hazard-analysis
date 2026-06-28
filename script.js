@@ -1,21 +1,13 @@
 // --- GLOBAL VARIABLES ---
+const API_URL = 'http://localhost:5000/api';
 let currentUser = null;
-let users = JSON.parse(localStorage.getItem('hars_users')) || [];
-let hazards = JSON.parse(localStorage.getItem('hars_hazards')) || [];
+let hazards = [];
 let materials = JSON.parse(localStorage.getItem('hars_materials')) || [];
 let facilities = JSON.parse(localStorage.getItem('hars_facilities')) || [];
 
 // --- MOCK DATA GENERATION ---
 function generateMockData() {
-    if (hazards.length === 0) {
-        hazards = [
-            { id: 1, title: 'Chemical Leak - Benzene Tank', description: 'Small leak detected near valve.', location: 'Chemical Processing Plant A', severity: 'High', probability: 'High', riskLevel: 'High', status: 'Pending', date: '2026-06-25', score: 9.2, priority: 'Critical' },
-            { id: 2, title: 'Fire Risk - Refined Fuel Area', description: 'Combustible material stored improperly.', location: 'Refinery Complex B', severity: 'High', probability: 'Medium', riskLevel: 'High', status: 'In Progress', date: '2026-06-24', score: 8.7, priority: 'Critical' },
-            { id: 3, title: 'Pressure Vessel Core Fail', description: 'Pressure exceeding safe limits.', location: 'Pharma Facility C', severity: 'Medium', probability: 'High', riskLevel: 'High', status: 'Pending', date: '2026-06-23', score: 7.9, priority: 'High' },
-            { id: 4, title: 'Gas Alarm Sensor Calibration', description: 'Sensors reading slightly off baseline.', location: 'Bulk Gas Depot H', severity: 'Medium', probability: 'Medium', riskLevel: 'Medium', status: 'Completed', date: '2026-06-26', score: 6.8, priority: 'Medium' }
-        ];
-        localStorage.setItem('hars_hazards', JSON.stringify(hazards));
-    }
+    // Hazards are now loaded from backend API
     
     if (materials.length === 0) {
         materials = [
@@ -112,7 +104,7 @@ function toggleAuth(section) {
 }
 
 // --- AUTHENTICATION ---
-function handleSignup(e) {
+async function handleSignup(e) {
     e.preventDefault();
     const name = document.getElementById('signup-name').value.trim();
     const email = document.getElementById('signup-email').value.trim();
@@ -129,44 +121,63 @@ function handleSignup(e) {
         showMessage(messageEl, 'Passwords do not match.', 'error');
         return;
     }
-    if (users.find(u => u.email === email)) {
-        showMessage(messageEl, 'Email is already registered.', 'error');
-        return;
+
+    try {
+        const res = await fetch(`${API_URL}/auth/signup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fullName: name, email, password, role })
+        });
+        const data = await res.json();
+        
+        if (!res.ok) {
+            showMessage(messageEl, data.message || 'Error occurred', 'error');
+            return;
+        }
+
+        showMessage(messageEl, 'Registration successful! Please login.', 'success');
+        e.target.reset();
+        setTimeout(() => {
+            messageEl.style.display = 'none';
+            toggleAuth('login');
+        }, 2000);
+    } catch (err) {
+        showMessage(messageEl, 'Network error. Please try again.', 'error');
     }
-
-    const newUser = { id: Date.now(), name, email, password, role };
-    users.push(newUser);
-    localStorage.setItem('hars_users', JSON.stringify(users));
-
-    showMessage(messageEl, 'Registration successful! Please login.', 'success');
-    e.target.reset();
-    setTimeout(() => {
-        messageEl.style.display = 'none';
-        toggleAuth('login');
-    }, 2000);
 }
 
-function handleLogin(e) {
+async function handleLogin(e) {
     e.preventDefault();
     const email = document.getElementById('login-email').value.trim();
     const password = document.getElementById('login-password').value;
     const messageEl = document.getElementById('login-message');
 
-    const user = users.find(u => u.email === email && u.password === password);
-
-    if (user) {
-        currentUser = user;
-        localStorage.setItem('hars_currentUser', JSON.stringify(user));
-        e.target.reset();
-        navigate('dashboard-page');
-    } else {
-        showMessage(messageEl, 'Invalid email or password.', 'error');
+    try {
+        const res = await fetch(`${API_URL}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
+        const data = await res.json();
+        
+        if (res.ok) {
+            currentUser = { ...data, name: data.fullName };
+            localStorage.setItem('hars_currentUser', JSON.stringify(currentUser));
+            localStorage.setItem('hars_token', data.token);
+            e.target.reset();
+            navigate('dashboard-page');
+        } else {
+            showMessage(messageEl, data.message || 'Invalid email or password.', 'error');
+        }
+    } catch (err) {
+        showMessage(messageEl, 'Network error. Please try again.', 'error');
     }
 }
 
 function logoutUser() {
     currentUser = null;
     localStorage.removeItem('hars_currentUser');
+    localStorage.removeItem('hars_token');
     navigate('landing-page');
 }
 
@@ -209,7 +220,36 @@ function applyRBAC() {
     }
 }
 
-function renderDashboard() {
+async function fetchHazards() {
+    const token = localStorage.getItem('hars_token');
+    if (!token) return;
+    try {
+        const res = await fetch(`${API_URL}/hazards`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            hazards = data.map(h => ({
+                id: h._id,
+                title: h.hazardTitle,
+                location: h.location,
+                severity: h.severity,
+                probability: h.probability,
+                status: h.status,
+                description: h.description,
+                riskLevel: h.riskLevel,
+                reportedBy: h.reportedBy ? h.reportedBy.fullName : 'Unknown',
+                date: h.createdAt ? h.createdAt.split('T')[0] : '',
+                score: h.riskLevel === 'High' ? 8.5 : h.riskLevel === 'Medium' ? 5.5 : 2.5,
+                priority: h.riskLevel === 'High' ? 'Critical' : h.riskLevel === 'Medium' ? 'Medium' : 'Low'
+            }));
+        }
+    } catch (err) {
+        console.error('Error fetching hazards:', err);
+    }
+}
+
+async function renderDashboard() {
     if (!currentUser) return;
     
     document.getElementById('nav-user-email').textContent = currentUser.email;
@@ -217,6 +257,8 @@ function renderDashboard() {
     document.getElementById('nav-user-avatar').textContent = currentUser.name.charAt(0).toUpperCase();
 
     applyRBAC();
+
+    await fetchHazards();
 
     document.getElementById('kpi-critical').textContent = hazards.filter(h => h.riskLevel === 'High').length;
     document.getElementById('kpi-facilities').textContent = facilities.length.toString();
@@ -285,16 +327,16 @@ function renderTopHazards() {
         if (currentUser.role === 'System Administrator') {
             actionsHtml += `
                 <div style="display:flex; gap:5px;">
-                    <button class="btn-assign" onclick="resolveHazard(${hazard.id})" title="Resolve"><i class='bx bx-check'></i></button>
-                    <button class="btn-outline" onclick="editHazard(${hazard.id})" title="Edit"><i class='bx bx-edit'></i></button>
-                    <button class="btn-outline" style="background:#ef4444;" onclick="deleteHazard(${hazard.id})" title="Delete"><i class='bx bx-trash'></i></button>
+                    <button class="btn-assign" onclick="resolveHazard('${hazard.id}')" title="Resolve"><i class='bx bx-check'></i></button>
+                    <button class="btn-outline" onclick="editHazard('${hazard.id}')" title="Edit"><i class='bx bx-edit'></i></button>
+                    <button class="btn-outline" style="background:#ef4444;" onclick="deleteHazard('${hazard.id}')" title="Delete"><i class='bx bx-trash'></i></button>
                 </div>
             `;
         } else if (currentUser.role === 'Manager') {
             actionsHtml += `
                 <div style="display:flex; gap:5px;">
-                    <button class="btn-assign" onclick="resolveHazard(${hazard.id})" title="Resolve"><i class='bx bx-check'></i></button>
-                    <button class="btn-outline" onclick="editHazard(${hazard.id})" title="Edit"><i class='bx bx-edit'></i></button>
+                    <button class="btn-assign" onclick="resolveHazard('${hazard.id}')" title="Resolve"><i class='bx bx-check'></i></button>
+                    <button class="btn-outline" onclick="editHazard('${hazard.id}')" title="Edit"><i class='bx bx-edit'></i></button>
                 </div>
             `;
         } else {
@@ -664,7 +706,7 @@ function closeHazardModal() {
     document.getElementById('hazard-modal').classList.remove('active');
 }
 
-function handleSaveHazard(e) {
+async function handleSaveHazard(e) {
     e.preventDefault();
     
     const idField = document.getElementById('hazard-id').value;
@@ -675,41 +717,40 @@ function handleSaveHazard(e) {
     const status = document.getElementById('hazard-status').value;
     const description = document.getElementById('hazard-description').value;
     
-    const riskLevel = calculateRisk(severity, probability);
+    const token = localStorage.getItem('hars_token');
+    const payload = {
+        hazardTitle: title,
+        location,
+        severity,
+        probability,
+        status: status || 'Pending',
+        description
+    };
 
-    if (idField) {
-        // Update existing
-        const haz = hazards.find(h => h.id == idField);
-        if (haz) {
-            haz.title = title;
-            haz.location = location;
-            haz.severity = severity;
-            haz.probability = probability;
-            haz.status = status;
-            haz.description = description;
-            haz.riskLevel = riskLevel;
-            haz.score = riskLevel === 'High' ? 8.5 : riskLevel === 'Medium' ? 5.5 : 2.5;
-            haz.priority = riskLevel === 'High' ? 'Critical' : riskLevel === 'Medium' ? 'Medium' : 'Low';
+    try {
+        if (idField) {
+            await fetch(`${API_URL}/hazards/${idField}`, {
+                method: 'PUT',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify(payload)
+            });
+        } else {
+            await fetch(`${API_URL}/hazards`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify(payload)
+            });
         }
-    } else {
-        const newHazard = {
-            id: Date.now(),
-            title,
-            location,
-            severity,
-            probability,
-            riskLevel,
-            status,
-            description,
-            reportedBy: currentUser.name,
-            date: new Date().toISOString().split('T')[0],
-            score: riskLevel === 'High' ? 8.5 : riskLevel === 'Medium' ? 5.5 : 2.5,
-            priority: riskLevel === 'High' ? 'Critical' : riskLevel === 'Medium' ? 'Medium' : 'Low'
-        };
-        hazards.push(newHazard);
+    } catch (err) {
+        console.error('Error saving hazard:', err);
     }
 
-    localStorage.setItem('hars_hazards', JSON.stringify(hazards));
     closeHazardModal();
     renderDashboard();
 }
@@ -730,20 +771,37 @@ function editHazard(id) {
     document.getElementById('hazard-modal').classList.add('active');
 }
 
-function resolveHazard(id) {
+async function resolveHazard(id) {
     if (confirm('Are you sure you want to mark this hazard as resolved?')) {
-        const haz = hazards.find(h => h.id === id);
-        if (haz) haz.status = 'Completed';
-        localStorage.setItem('hars_hazards', JSON.stringify(hazards));
-        renderDashboard();
+        const token = localStorage.getItem('hars_token');
+        try {
+            await fetch(`${API_URL}/hazards/${id}`, {
+                method: 'PUT',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ status: 'Completed' })
+            });
+            renderDashboard();
+        } catch (err) {
+            console.error('Error resolving hazard', err);
+        }
     }
 }
 
-function deleteHazard(id) {
+async function deleteHazard(id) {
     if (confirm('Are you sure you want to completely delete this hazard report?')) {
-        hazards = hazards.filter(h => h.id !== id);
-        localStorage.setItem('hars_hazards', JSON.stringify(hazards));
-        renderDashboard();
+        const token = localStorage.getItem('hars_token');
+        try {
+            await fetch(`${API_URL}/hazards/${id}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            renderDashboard();
+        } catch (err) {
+            console.error('Error deleting hazard', err);
+        }
     }
 }
 
