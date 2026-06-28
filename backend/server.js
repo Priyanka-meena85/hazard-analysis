@@ -14,9 +14,21 @@ const path = require('path');
 app.use(express.json());
 app.use(cors());
 
-// Serve frontend static files
-app.use(express.static(path.join(__dirname, '../')));
+// Health Check Routes
+app.get("/", (req, res) => {
+  res.send("HARS Backend Server is running");
+});
 
+app.get("/api", (req, res) => {
+  res.json({
+    message: "HARS API is running successfully",
+    endpoints: {
+      signup: "/api/auth/signup",
+      login: "/api/auth/login",
+      hazards: "/api/hazards"
+    }
+  });
+});
 
 // Routes
 app.use('/api/auth', authRoutes);
